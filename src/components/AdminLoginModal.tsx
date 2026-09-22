@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Lock, ShieldCheck, Eye, EyeOff, X, ArrowLeft, KeyRound } from 'lucide-react';
+import { ChangeAdminPinModal } from './ChangeAdminPinModal.tsx';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -12,6 +13,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
 
   if (!isOpen) return null;
 
@@ -107,7 +109,14 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
               </button>
             </div>
             <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-400 mt-2 px-1">
-              <span>الرمز الافتراضي للمنصة: <strong className="text-indigo-600 dark:text-indigo-400 font-mono">emam2025</strong></span>
+              <span>الرمز الافتراضي: <strong className="text-indigo-600 dark:text-indigo-400 font-mono">emam2025</strong></span>
+              <button
+                type="button"
+                onClick={() => setShowChangePinModal(true)}
+                className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-semibold cursor-pointer underline"
+              >
+                تغيير كلمة المرور
+              </button>
             </div>
           </div>
 
@@ -127,6 +136,12 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
           </button>
         </form>
       </div>
+
+      {/* CHANGE ADMIN PIN MODAL */}
+      <ChangeAdminPinModal
+        isOpen={showChangePinModal}
+        onClose={() => setShowChangePinModal(false)}
+      />
     </div>
   );
 };

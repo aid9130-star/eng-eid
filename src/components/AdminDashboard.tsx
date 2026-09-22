@@ -17,8 +17,10 @@ import {
   ShieldCheck,
   RotateCcw,
   AlertTriangle,
+  Lock,
 } from 'lucide-react';
 import { AccessCode, Lesson, Exam, AdminStats } from '../types.ts';
+import { ChangeAdminPinModal } from './ChangeAdminPinModal.tsx';
 import {
   ResponsiveContainer,
   BarChart,
@@ -90,6 +92,7 @@ export const AdminDashboard: React.FC = () => {
   const [students, setStudents] = useState<any[]>([]);
   const [results, setResults] = useState<any[]>([]);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
   const [resetPin, setResetPin] = useState('');
   const [resetting, setResetting] = useState(false);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
@@ -127,20 +130,20 @@ export const AdminDashboard: React.FC = () => {
   const fetchAllAdminData = async () => {
     try {
       const [statsRes, codesRes, lessonsRes, examsRes, studentsRes, resultsRes] = await Promise.all([
-        fetch('/api/admin/stats').then((r) => r.json()).catch(() => null),
-        fetch('/api/admin/codes').then((r) => r.json()).catch(() => []),
-        fetch('/api/lessons?isAdmin=true').then((r) => r.json()).catch(() => []),
-        fetch('/api/exams').then((r) => r.json()).catch(() => []),
-        fetch('/api/admin/students').then((r) => r.json()).catch(() => []),
-        fetch('/api/admin/results').then((r) => r.json()).catch(() => []),
+        fetch('/api/admin/stats').then((r) => r.json()),
+        fetch('/api/admin/codes').then((r) => r.json()),
+        fetch('/api/lessons?isAdmin=true').then((r) => r.json()),
+        fetch('/api/exams').then((r) => r.json()),
+        fetch('/api/admin/students').then((r) => r.json()),
+        fetch('/api/admin/results').then((r) => r.json()),
       ]);
 
-      setStats(statsRes && !statsRes.error ? statsRes : null);
-      setCodes(Array.isArray(codesRes) ? codesRes : []);
-      setLessons(Array.isArray(lessonsRes) ? lessonsRes : []);
-      setExams(Array.isArray(examsRes) ? examsRes : []);
-      setStudents(Array.isArray(studentsRes) ? studentsRes : []);
-      setResults(Array.isArray(resultsRes) ? resultsRes : []);
+      setStats(statsRes);
+      setCodes(codesRes);
+      setLessons(lessonsRes);
+      setExams(examsRes);
+      setStudents(studentsRes);
+      setResults(resultsRes);
     } catch (err) {
       console.error('Error fetching admin data:', err);
     }
@@ -304,6 +307,14 @@ export const AdminDashboard: React.FC = () => {
         {/* Action quick shortcut */}
         <div className="flex flex-wrap gap-2">
           <button
+            onClick={() => setShowChangePinModal(true)}
+            title="تغيير كلمة مرور المشرف للوحة التحكم"
+            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 border border-amber-900/40 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>تغيير كلمة المرور</span>
+          </button>
+          <button
             onClick={() => setShowResetModal(true)}
             title="تصفير بيانات الطلاب والتسليمات التجريبية وبدء عام دراسي نظيف"
             className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-rose-300 hover:text-rose-200 border border-rose-900/40 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
@@ -434,6 +445,27 @@ export const AdminDashboard: React.FC = () => {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* Security & Access Management Card */}
+          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-6 shadow-md border border-indigo-900/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-indigo-300 text-xs font-bold">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>أمان وحماية لوحة المشرف</span>
+              </div>
+              <h4 className="text-base font-bold text-white">كلمة مرور الأستاذ إمام يوسف (Admin PIN)</h4>
+              <p className="text-slate-300 text-xs leading-relaxed max-w-xl">
+                لوحة التحكم محمية بكلمة مرور خاصة في قاعدة البيانات. يمكنك تغيير كلمة المرور في أي وقت بحرية واختيار كلمة مرور جديدة سريّة تناسبك.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowChangePinModal(true)}
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2 whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>تغيير كلمة المرور الآن</span>
+            </button>
           </div>
         </div>
       )}
@@ -1140,6 +1172,12 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* CHANGE ADMIN PIN MODAL */}
+      <ChangeAdminPinModal
+        isOpen={showChangePinModal}
+        onClose={() => setShowChangePinModal(false)}
+      />
     </div>
   );
 };

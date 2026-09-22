@@ -34,13 +34,10 @@ export const StudentResultsView: React.FC<StudentResultsViewProps> = ({ student 
       const res = await fetch(`/api/student/${student.id}/results`);
       if (res.ok) {
         const data = await res.json();
-        setResults(Array.isArray(data) ? data : []);
-      } else {
-        setResults([]);
+        setResults(data);
       }
     } catch (err) {
       console.error(err);
-      setResults([]);
     } finally {
       setLoading(false);
     }

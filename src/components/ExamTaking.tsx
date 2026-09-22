@@ -53,9 +53,6 @@ export const ExamTaking: React.FC<ExamTakingProps> = ({ examId, student, onFinis
       const res = await fetch(`/api/exams/${examId}`);
       if (!res.ok) throw new Error('فشل تحميل بيانات الاختبار');
       const data: ExamDetailedData = await res.json();
-      if (!data || !Array.isArray(data.questions)) {
-        throw new Error('بيانات الاختبار غير مكتملة أو لا توجد أسئلة');
-      }
       setExam(data);
 
       if (data.timeLimitMinutes > 0) {

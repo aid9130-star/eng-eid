@@ -116,3 +116,11 @@ export const examResultsRelations = relations(examResults, ({ one }) => ({
     references: [students.id],
   }),
 }));
+
+// 8. System Settings table (Admin PIN / Password, platform configuration)
+export const systemSettings = pgTable('system_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+

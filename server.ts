@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { seedInitialDataIfNeeded } from './src/db/seed.ts';
 import {
@@ -24,11 +23,13 @@ import {
   getStudentResults,
   getAdminStats,
   clearDemoData,
+  verifyAdminPin,
+  changeAdminPin,
 } from './src/db/queries.ts';
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
 
   app.use(express.json());
 
@@ -264,23 +265,49 @@ async function startServer() {
     }
   });
 
-  // 10. Teacher Authentication (PIN / Passcode)
-  const TEACHER_PIN = process.env.ADMIN_PIN || 'emam2025';
-
-  app.post('/api/admin/verify-pin', (req, res) => {
-    const { pin } = req.body;
-    if (pin && (pin === TEACHER_PIN || pin === 'emam2025' || pin === '2025')) {
-      return res.json({ success: true, token: 'tafawwoq_teacher_master_authenticated' });
+  // 10. Teacher Authentication & PIN Management
+  app.post('/api/admin/verify-pin', async (req, res) => {
+    try {
+      const { pin } = req.body;
+      if (!pin) {
+        return res.status(400).json({ error: 'رمز الدخول أو كلمة المرور مطلوبة' });
+      }
+      const isValid = await verifyAdminPin(pin);
+      if (isValid) {
+        return res.json({ success: true, token: 'tafawwoq_teacher_master_authenticated' });
+      }
+      return res.status(401).json({ error: 'كلمة المرور أو رمز الدخول غير صحيح' });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
-    return res.status(401).json({ error: 'كلمة المرور أو رمز الدخول غير صحيح' });
+  });
+
+  app.post('/api/admin/change-pin', async (req, res) => {
+    try {
+      const { currentPin, newPin } = req.body;
+      if (!currentPin) {
+        return res.status(400).json({ error: 'كلمة المرور الحالية مطلوبة' });
+      }
+      if (!newPin || typeof newPin !== 'string' || newPin.trim().length < 4) {
+        return res.status(400).json({ error: 'كلمة المرور الجديدة يجب أن تكون 4 خانات على الأقل' });
+      }
+      const result = await changeAdminPin(currentPin, newPin);
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || 'فشل تغيير كلمة المرور' });
+    }
   });
 
   // 11. Clear test data for clean production launch
   app.post('/api/admin/reset-data', async (req, res) => {
     try {
       const { pin, keepCurriculum } = req.body;
-      if (!pin || (pin !== TEACHER_PIN && pin !== 'emam2025' && pin !== '2025')) {
-        return res.status(401).json({ error: 'غير مصرح بهذا الإجراء' });
+      if (!pin) {
+        return res.status(401).json({ error: 'رمز الأمان مطلوب' });
+      }
+      const isValid = await verifyAdminPin(pin);
+      if (!isValid) {
+        return res.status(401).json({ error: 'رمز الأمان غير مصرح به' });
       }
       const result = await clearDemoData(keepCurriculum !== false);
       res.json(result);
@@ -297,9 +324,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = fs.existsSync(path.join(__dirname, 'index.html'))
-      ? __dirname
-      : path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api')) {

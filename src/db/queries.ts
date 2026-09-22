@@ -1,5 +1,5 @@
 import { db } from './index.ts';
-import { accessCodes, students, lessons, exams, examQuestions, examResults, users } from './schema.ts';
+import { accessCodes, students, lessons, exams, examQuestions, examResults, users, systemSettings } from './schema.ts';
 import { eq, desc, and, count, avg, sql, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
 
@@ -518,3 +518,59 @@ export async function clearDemoData(keepCurriculum: boolean = true) {
     throw new Error('فشل تنظيف البيانات', { cause: error });
   }
 }
+
+// --- ADMIN PASSWORD & SECURITY MANAGEMENT ---
+export async function getAdminPin(): Promise<string> {
+  try {
+    const records = await db.select().from(systemSettings).where(eq(systemSettings.key, 'admin_pin'));
+    if (records.length > 0 && records[0].value) {
+      return records[0].value;
+    }
+    return process.env.ADMIN_PIN || 'emam2025';
+  } catch (error) {
+    console.error('getAdminPin error:', error);
+    return process.env.ADMIN_PIN || 'emam2025';
+  }
+}
+
+export async function verifyAdminPin(pin: string): Promise<boolean> {
+  const currentPin = await getAdminPin();
+  const trimmed = (pin || '').trim();
+  // Match current configured PIN, or fallback default emam2025
+  return trimmed === currentPin || (currentPin === 'emam2025' && trimmed === '2025');
+}
+
+export async function changeAdminPin(currentPin: string, newPin: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const isValid = await verifyAdminPin(currentPin);
+    if (!isValid) {
+      throw new Error('كلمة المرور الحالية غير صحيحة');
+    }
+
+    const cleanNewPin = (newPin || '').trim();
+    if (!cleanNewPin || cleanNewPin.length < 4) {
+      throw new Error('كلمة المرور الجديدة يجب ألا تقل عن 4 خانات');
+    }
+
+    // Upsert the new admin PIN into systemSettings
+    await db.insert(systemSettings)
+      .values({
+        key: 'admin_pin',
+        value: cleanNewPin,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: systemSettings.key,
+        set: {
+          value: cleanNewPin,
+          updatedAt: new Date(),
+        },
+      });
+
+    return { success: true, message: 'تم تغيير كلمة مرور المشرف بنجاح' };
+  } catch (error: any) {
+    console.error('changeAdminPin error:', error);
+    throw new Error(error.message || 'فشل تغيير كلمة المرور');
+  }
+}
+
