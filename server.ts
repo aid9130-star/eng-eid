@@ -1,5 +1,7 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { seedInitialDataIfNeeded } from './src/db/seed.ts';
 import {
@@ -29,8 +31,9 @@ import {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+  app.set('trust proxy', 1);
   app.use(express.json());
 
   // Seed DB with demo English curriculum & codes asynchronously without delaying server listen
@@ -324,13 +327,23 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
+      ? path.join(process.cwd(), 'dist')
+      : fs.existsSync(path.join(__dirname, 'index.html'))
+      ? __dirname
+      : path.join(process.cwd(), 'dist');
+
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api')) {
         return res.status(404).json({ error: 'Endpoint not found' });
       }
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          res.status(500).send('Frontend build not found. Please run npm run build.');
+        }
+      });
     });
   }
 
