@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, ShieldCheck, Eye, EyeOff, X, ArrowLeft, KeyRound } from 'lucide-react';
 import { ChangeAdminPinModal } from './ChangeAdminPinModal.tsx';
+import * as dataService from '../lib/dataService.ts';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -21,29 +22,19 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
     e.preventDefault();
     setError(null);
 
-    if (!pin.trim()) {
+    const cleanPin = pin.trim();
+    if (!cleanPin) {
       setError('يرجى إدخال رمز الدخول السري أو كلمة المرور');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/verify-pin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: pin.trim() }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'رمز الدخول غير صحيح');
-      }
-
-      sessionStorage.setItem('tafawwoq_admin_auth', data.token);
+      await dataService.verifyAdminPin(cleanPin);
       onSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'فشل التحقق من هوية المعلم');
+      setError(err.message || 'فشل التحقق من هوية المعلم، تأكد من صحة رمز المرور');
     } finally {
       setLoading(false);
     }

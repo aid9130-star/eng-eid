@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { AccessCode, Lesson, Exam, AdminStats } from '../types.ts';
 import { ChangeAdminPinModal } from './ChangeAdminPinModal.tsx';
+import * as dataService from '../lib/dataService.ts';
 import {
   ResponsiveContainer,
   BarChart,
@@ -72,7 +73,7 @@ export const AdminDashboard: React.FC = () => {
   });
   const [examQuestionsList, setExamQuestionsList] = useState<Array<{
     questionText: string;
-    type: string;
+    type: 'multiple_choice' | 'true_false';
     options: string[];
     correctOptionIndex: number;
     explanation: string;
@@ -106,13 +107,7 @@ export const AdminDashboard: React.FC = () => {
     setResetting(true);
     setResetMsg(null);
     try {
-      const res = await fetch('/api/admin/reset-data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: resetPin, keepCurriculum: true }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشلت العملية');
+      await dataService.resetData();
       setResetMsg('تم تصفير سجلات الطلاب التجريبية وإعادة الأكواد غير مستخدمة بنجاح!');
       setTimeout(() => {
         setShowResetModal(false);
@@ -130,12 +125,12 @@ export const AdminDashboard: React.FC = () => {
   const fetchAllAdminData = async () => {
     try {
       const [statsRes, codesRes, lessonsRes, examsRes, studentsRes, resultsRes] = await Promise.all([
-        fetch('/api/admin/stats').then((r) => r.json()),
-        fetch('/api/admin/codes').then((r) => r.json()),
-        fetch('/api/lessons?isAdmin=true').then((r) => r.json()),
-        fetch('/api/exams').then((r) => r.json()),
-        fetch('/api/admin/students').then((r) => r.json()),
-        fetch('/api/admin/results').then((r) => r.json()),
+        dataService.getStats(),
+        dataService.getCodes(),
+        dataService.getLessons(true),
+        dataService.getExams(),
+        dataService.getStudents(),
+        dataService.getResults(),
       ]);
 
       setStats(statsRes);
@@ -154,14 +149,8 @@ export const AdminDashboard: React.FC = () => {
     e.preventDefault();
     setGenerating(true);
     try {
-      const res = await fetch('/api/admin/codes/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: generateCount, note: generateNote }),
-      });
-      if (res.ok) {
-        await fetchAllAdminData();
-      }
+      await dataService.generateCodes(generateCount, generateNote);
+      await fetchAllAdminData();
     } catch (err) {
       console.error(err);
     } finally {
@@ -172,12 +161,8 @@ export const AdminDashboard: React.FC = () => {
   const handleToggleCode = async (id: number, currentStatus: string) => {
     const nextStatus = currentStatus === 'disabled' ? 'unused' : 'disabled';
     try {
-      const res = await fetch(`/api/admin/codes/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus }),
-      });
-      if (res.ok) fetchAllAdminData();
+      await dataService.updateCode(id, nextStatus as any);
+      fetchAllAdminData();
     } catch (err) {
       console.error(err);
     }
@@ -186,8 +171,8 @@ export const AdminDashboard: React.FC = () => {
   const handleDeleteCode = async (id: number) => {
     if (!window.confirm('هل أنت متأكد من رغبتك في حذف هذا الكود؟')) return;
     try {
-      const res = await fetch(`/api/admin/codes/${id}`, { method: 'DELETE' });
-      if (res.ok) fetchAllAdminData();
+      await dataService.deleteCode(id);
+      fetchAllAdminData();
     } catch (err) {
       console.error(err);
     }
@@ -203,24 +188,18 @@ export const AdminDashboard: React.FC = () => {
   const handleCreateLesson = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/lessons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLesson),
+      await dataService.saveLesson(newLesson);
+      setShowAddLessonModal(false);
+      setNewLesson({
+        title: '',
+        description: '',
+        videoUrl: '',
+        durationMinutes: 40,
+        term: 'الترم الأول',
+        unit: 'Unit 1',
+        lessonNumber: lessons.length + 1,
       });
-      if (res.ok) {
-        setShowAddLessonModal(false);
-        setNewLesson({
-          title: '',
-          description: '',
-          videoUrl: '',
-          durationMinutes: 40,
-          term: 'الترم الأول',
-          unit: 'Unit 1',
-          lessonNumber: lessons.length + 1,
-        });
-        fetchAllAdminData();
-      }
+      fetchAllAdminData();
     } catch (err) {
       console.error(err);
     }
@@ -229,8 +208,8 @@ export const AdminDashboard: React.FC = () => {
   const handleDeleteLesson = async (id: number) => {
     if (!window.confirm('هل أنت متأكد من حذف هذا الدرس نهائياً؟')) return;
     try {
-      const res = await fetch(`/api/lessons/${id}`, { method: 'DELETE' });
-      if (res.ok) fetchAllAdminData();
+      await dataService.deleteLesson(id);
+      fetchAllAdminData();
     } catch (err) {
       console.error(err);
     }
@@ -240,18 +219,9 @@ export const AdminDashboard: React.FC = () => {
   const handleCreateExam = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/exams', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          exam: newExam,
-          questions: examQuestionsList,
-        }),
-      });
-      if (res.ok) {
-        setShowAddExamModal(false);
-        fetchAllAdminData();
-      }
+      await dataService.createExam(newExam, examQuestionsList);
+      setShowAddExamModal(false);
+      fetchAllAdminData();
     } catch (err) {
       console.error(err);
     }
@@ -260,8 +230,8 @@ export const AdminDashboard: React.FC = () => {
   const handleDeleteExam = async (id: number) => {
     if (!window.confirm('هل أنت متأكد من حذف هذا الاختبار؟')) return;
     try {
-      const res = await fetch(`/api/exams/${id}`, { method: 'DELETE' });
-      if (res.ok) fetchAllAdminData();
+      await dataService.deleteExam(id);
+      fetchAllAdminData();
     } catch (err) {
       console.error(err);
     }

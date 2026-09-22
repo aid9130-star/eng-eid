@@ -1,56 +1,49 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool, PoolConfig } from 'pg';
+import { Pool } from 'pg';
 import * as schema from './schema.ts';
 
 declare global {
   var _postgresPool: Pool | undefined;
 }
 
+export const hasDatabaseConfigured = (): boolean => {
+  return Boolean(
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    (process.env.SQL_HOST && process.env.SQL_USER)
+  );
+};
+
 export const createPool = () => {
   if (!global._postgresPool) {
-    const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-    const isProd = process.env.NODE_ENV === 'production';
-    const requireSsl =
-      process.env.SQL_SSL === 'true' ||
-      process.env.DATABASE_SSL === 'true' ||
-      (connectionString &&
-        (connectionString.includes('sslmode=require') ||
-          connectionString.includes('.supabase.') ||
-          connectionString.includes('.neon.tech') ||
-          connectionString.includes('.render.com') ||
-          connectionString.includes('railway') ||
-          connectionString.includes('pooler.supabase.com')));
+    const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL;
 
-    const poolConfig: PoolConfig = connectionString
-      ? {
-          connectionString,
-          ssl: requireSsl ? { rejectUnauthorized: false } : undefined,
-          max: 10,
-          connectionTimeoutMillis: 15000,
-        }
-      : {
-          host: process.env.SQL_HOST || process.env.PGHOST || 'localhost',
-          port: process.env.SQL_PORT
-            ? parseInt(process.env.SQL_PORT, 10)
-            : process.env.PGPORT
-            ? parseInt(process.env.PGPORT, 10)
-            : 5432,
-          user: process.env.SQL_USER || process.env.PGUSER || 'postgres',
-          password: process.env.SQL_PASSWORD || process.env.PGPASSWORD || '',
-          database: process.env.SQL_DB_NAME || process.env.PGDATABASE || 'postgres',
-          ssl:
-            requireSsl ||
-            (isProd && process.env.SQL_HOST && !process.env.SQL_HOST.includes('localhost'))
-              ? { rejectUnauthorized: false }
-              : undefined,
-          max: 10,
-          connectionTimeoutMillis: 15000,
-        };
-
-    global._postgresPool = new Pool(poolConfig);
+    if (connectionString) {
+      global._postgresPool = new Pool({
+        connectionString,
+        ssl: connectionString.includes('localhost') ? false : { rejectUnauthorized: false },
+        max: 10,
+        connectionTimeoutMillis: 8000,
+      });
+    } else if (process.env.SQL_HOST) {
+      global._postgresPool = new Pool({
+        host: process.env.SQL_HOST,
+        user: process.env.SQL_USER,
+        password: process.env.SQL_PASSWORD,
+        database: process.env.SQL_DB_NAME,
+        max: 10,
+        connectionTimeoutMillis: 8000,
+      });
+    } else {
+      // In-memory or fallback mode: create short-timeout pool to prevent serverless freeze
+      global._postgresPool = new Pool({
+        connectionTimeoutMillis: 1000,
+      });
+    }
 
     global._postgresPool.on('error', (err) => {
-      console.error('Unexpected error on idle SQL pool client:', err.message);
+      console.warn('Postgres pool warning:', err?.message || err);
     });
   }
   return global._postgresPool;

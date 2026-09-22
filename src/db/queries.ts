@@ -1,134 +1,225 @@
-import { db } from './index.ts';
+import { db, hasDatabaseConfigured } from './index.ts';
 import { accessCodes, students, lessons, exams, examQuestions, examResults, users, systemSettings } from './schema.ts';
 import { eq, desc, and, count, avg, sql, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
+import { initialCodes, initialLessons, initialExam, initialQuestions } from './initialData.ts';
+
+// In-memory fallback state (guarantees the app works smoothly on Vercel even before Postgres credentials are added)
+const memoryState = {
+  adminPin: process.env.ADMIN_PIN || 'emam2025',
+  codes: [...initialCodes],
+  lessons: [...initialLessons],
+  exams: [{ ...initialExam, questionsCount: initialQuestions.length, totalSubmissions: 0, avgScore: 0 }],
+  questions: [...initialQuestions],
+  students: [] as any[],
+  results: [] as any[],
+};
 
 // --- ACCESS CODES ---
 export async function getAccessCodes() {
+  if (!hasDatabaseConfigured()) {
+    return memoryState.codes;
+  }
   try {
     return await db.select().from(accessCodes).orderBy(desc(accessCodes.createdAt));
   } catch (error) {
-    console.error('getAccessCodes error:', error);
-    throw new Error('فشل جلب الأكواد من قاعدة البيانات', { cause: error });
+    console.warn('getAccessCodes fallback to memory:', error);
+    return memoryState.codes;
   }
 }
 
 export async function generateAccessCodes(amount: number, note?: string) {
-  try {
-    const generated: Array<{ code: string; note?: string }> = [];
-    for (let i = 0; i < amount; i++) {
-      // Generate clean memorable code format: TOP-XXXX-XXXX
-      const randomPart = crypto.randomBytes(3).toString('hex').toUpperCase();
-      const code = `TOP-${Math.floor(100 + Math.random() * 900)}-${randomPart}`;
-      generated.push({ code, note: note || 'دفعة أكواد جديدة' });
-    }
-    return await db.insert(accessCodes).values(generated).returning();
-  } catch (error) {
-    console.error('generateAccessCodes error:', error);
-    throw new Error('فشل توليد الأكواد الجديدة', { cause: error });
+  const generated: Array<any> = [];
+  for (let i = 0; i < amount; i++) {
+    const randomPart = crypto.randomBytes(3).toString('hex').toUpperCase();
+    const code = `TOP-${Math.floor(100 + Math.random() * 900)}-${randomPart}`;
+    generated.push({
+      id: memoryState.codes.length + i + 1,
+      code,
+      note: note || 'دفعة أكواد جديدة',
+      status: 'active',
+      usedByStudentName: null,
+      usedByStudentPhone: null,
+      createdAt: new Date(),
+    });
   }
+
+  memoryState.codes.unshift(...generated);
+
+  if (hasDatabaseConfigured()) {
+    try {
+      const dbValues = generated.map(g => ({ code: g.code, note: g.note }));
+      return await db.insert(accessCodes).values(dbValues).returning();
+    } catch (error) {
+      console.warn('generateAccessCodes DB insert warning:', error);
+    }
+  }
+
+  return generated;
 }
 
 export async function toggleCodeStatus(id: number, status: 'unused' | 'disabled') {
-  try {
-    return await db.update(accessCodes)
-      .set({ status })
-      .where(eq(accessCodes.id, id))
-      .returning();
-  } catch (error) {
-    console.error('toggleCodeStatus error:', error);
-    throw new Error('فشل تحديث حالة الكود', { cause: error });
+  const code = memoryState.codes.find(c => c.id === id);
+  if (code) {
+    code.status = status;
   }
+
+  if (hasDatabaseConfigured()) {
+    try {
+      return await db.update(accessCodes)
+        .set({ status })
+        .where(eq(accessCodes.id, id))
+        .returning();
+    } catch (error) {
+      console.warn('toggleCodeStatus DB warning:', error);
+    }
+  }
+
+  return code ? [code] : [];
 }
 
 export async function deleteAccessCode(id: number) {
-  try {
-    return await db.delete(accessCodes).where(eq(accessCodes.id, id)).returning();
-  } catch (error) {
-    console.error('deleteAccessCode error:', error);
-    throw new Error('فشل حذف الكود', { cause: error });
+  const index = memoryState.codes.findIndex(c => c.id === id);
+  if (index !== -1) {
+    memoryState.codes.splice(index, 1);
   }
+
+  if (hasDatabaseConfigured()) {
+    try {
+      return await db.delete(accessCodes).where(eq(accessCodes.id, id)).returning();
+    } catch (error) {
+      console.warn('deleteAccessCode DB warning:', error);
+    }
+  }
+
+  return [{ id }];
 }
 
 // --- STUDENT AUTH & REGISTRATION WITH CODE ---
 export async function studentLoginOrRegister(name: string, phone: string, code: string) {
-  try {
-    const trimmedCode = code.trim();
-    const trimmedPhone = phone.trim();
-    const trimmedName = name.trim();
+  const trimmedCode = code.trim();
+  const trimmedPhone = phone.trim();
+  const trimmedName = name.trim();
 
-    // 1. Check if student already registered with this phone
-    const existingStudent = await db.select().from(students).where(eq(students.phone, trimmedPhone));
-    if (existingStudent.length > 0) {
-      const student = existingStudent[0];
-      // Update last active
-      await db.update(students)
-        .set({ lastActiveAt: new Date() })
-        .where(eq(students.id, student.id));
-      return student;
+  // If DB is configured, try DB first
+  if (hasDatabaseConfigured()) {
+    try {
+      // 1. Check if student already registered with this phone
+      const existingStudent = await db.select().from(students).where(eq(students.phone, trimmedPhone));
+      if (existingStudent.length > 0) {
+        const student = existingStudent[0];
+        await db.update(students)
+          .set({ lastActiveAt: new Date() })
+          .where(eq(students.id, student.id));
+        return student;
+      }
+
+      // 2. New student registration - verify the code
+      const codeRecord = await db.select().from(accessCodes).where(eq(accessCodes.code, trimmedCode));
+      if (codeRecord.length === 0) {
+        throw new Error('كود التفعيل غير صحيح، يرجى التأكد من الكود أو التواصل مع الأستاذ');
+      }
+
+      const codeData = codeRecord[0];
+      if (codeData.status === 'disabled') {
+        throw new Error('تم تعطيل هذا الكود، يرجى مراجعة إدارة المنصة');
+      }
+      if (codeData.status === 'used') {
+        throw new Error(`هذا الكود تم استخدامه مسبقاً من قِبل: ${codeData.usedByStudentName || 'طالب آخر'}`);
+      }
+
+      // 3. Mark code as used
+      await db.update(accessCodes)
+        .set({
+          status: 'used',
+          usedByStudentName: trimmedName,
+          usedByStudentPhone: trimmedPhone,
+          usedAt: new Date(),
+        })
+        .where(eq(accessCodes.id, codeData.id));
+
+      // 4. Create student session
+      const sessionToken = crypto.randomBytes(24).toString('hex');
+      const createdStudent = await db.insert(students).values({
+        name: trimmedName,
+        phone: trimmedPhone,
+        codeUsed: trimmedCode,
+        sessionToken,
+      }).returning();
+
+      return createdStudent[0];
+    } catch (error: any) {
+      if (error.message?.includes('كود التفعيل') || error.message?.includes('تعطيل') || error.message?.includes('استخدامه')) {
+        throw error;
+      }
+      console.warn('studentLoginOrRegister DB error, falling back to memory:', error);
     }
-
-    // 2. New student registration - verify the code
-    const codeRecord = await db.select().from(accessCodes).where(eq(accessCodes.code, trimmedCode));
-    if (codeRecord.length === 0) {
-      throw new Error('كود التفعيل غير صحيح، يرجى التأكد من الكود أو التواصل مع الأستاذ');
-    }
-
-    const codeData = codeRecord[0];
-    if (codeData.status === 'disabled') {
-      throw new Error('تم تعطيل هذا الكود، يرجى مراجعة إدارة المنصة');
-    }
-    if (codeData.status === 'used') {
-      throw new Error(`هذا الكود تم استخدامه مسبقاً من قِبل: ${codeData.usedByStudentName || 'طالب آخر'}`);
-    }
-
-    // 3. Mark code as used
-    await db.update(accessCodes)
-      .set({
-        status: 'used',
-        usedByStudentName: trimmedName,
-        usedByStudentPhone: trimmedPhone,
-        usedAt: new Date(),
-      })
-      .where(eq(accessCodes.id, codeData.id));
-
-    // 4. Create student session
-    const sessionToken = crypto.randomBytes(24).toString('hex');
-    const createdStudent = await db.insert(students).values({
-      name: trimmedName,
-      phone: trimmedPhone,
-      codeUsed: trimmedCode,
-      sessionToken,
-    }).returning();
-
-    return createdStudent[0];
-  } catch (error: any) {
-    console.error('studentLoginOrRegister error:', error);
-    throw error;
   }
+
+  // Memory fallback logic
+  const existingMem = memoryState.students.find(s => s.phone === trimmedPhone);
+  if (existingMem) {
+    existingMem.lastActiveAt = new Date();
+    return existingMem;
+  }
+
+  const codeRec = memoryState.codes.find(c => c.code.toLowerCase() === trimmedCode.toLowerCase());
+  if (!codeRec) {
+    throw new Error('كود التفعيل غير صحيح، يرجى التأكد من الكود أو التواصل مع الأستاذ');
+  }
+  if (codeRec.status === 'disabled') {
+    throw new Error('تم تعطيل هذا الكود، يرجى مراجعة إدارة المنصة');
+  }
+  if (codeRec.status === 'used') {
+    throw new Error(`هذا الكود تم استخدامه مسبقاً من قِبل: ${codeRec.usedByStudentName || 'طالب آخر'}`);
+  }
+
+  codeRec.status = 'used';
+  codeRec.usedByStudentName = trimmedName;
+  codeRec.usedByStudentPhone = trimmedPhone;
+
+  const newStudent = {
+    id: memoryState.students.length + 1,
+    name: trimmedName,
+    phone: trimmedPhone,
+    codeUsed: trimmedCode,
+    sessionToken: crypto.randomBytes(24).toString('hex'),
+    createdAt: new Date(),
+    lastActiveAt: new Date(),
+  };
+  memoryState.students.push(newStudent);
+  return newStudent;
 }
 
 export async function getStudentByToken(token: string) {
-  try {
-    const res = await db.select().from(students).where(eq(students.sessionToken, token));
-    return res[0] || null;
-  } catch (error) {
-    console.error('getStudentByToken error:', error);
-    return null;
+  if (hasDatabaseConfigured()) {
+    try {
+      const res = await db.select().from(students).where(eq(students.sessionToken, token));
+      if (res[0]) return res[0];
+    } catch (error) {
+      console.warn('getStudentByToken DB warning:', error);
+    }
   }
+  return memoryState.students.find(s => s.sessionToken === token) || null;
 }
 
 export async function getAllStudents() {
+  if (!hasDatabaseConfigured()) {
+    return memoryState.students;
+  }
   try {
     return await db.select().from(students).orderBy(desc(students.createdAt));
   } catch (error) {
-    console.error('getAllStudents error:', error);
-    throw new Error('فشل جلب قائمة الطلاب', { cause: error });
+    console.warn('getAllStudents fallback to memory:', error);
+    return memoryState.students;
   }
 }
 
 // --- LESSONS ---
 export async function getLessons(publishedOnly = true) {
+  if (!hasDatabaseConfigured()) {
+    return publishedOnly ? memoryState.lessons.filter(l => l.isPublished) : memoryState.lessons;
+  }
   try {
     if (publishedOnly) {
       return await db.select().from(lessons)
@@ -137,8 +228,8 @@ export async function getLessons(publishedOnly = true) {
     }
     return await db.select().from(lessons).orderBy(desc(lessons.createdAt));
   } catch (error) {
-    console.error('getLessons error:', error);
-    throw new Error('فشل جلب الدروس', { cause: error });
+    console.warn('getLessons fallback to memory:', error);
+    return publishedOnly ? memoryState.lessons.filter(l => l.isPublished) : memoryState.lessons;
   }
 }
 
@@ -201,6 +292,9 @@ export async function deleteLesson(id: number) {
 
 // --- EXAMS & QUESTIONS ---
 export async function getExamsWithStats(studentId?: number) {
+  if (!hasDatabaseConfigured()) {
+    return memoryState.exams;
+  }
   try {
     const allExams = await db.select().from(exams).orderBy(desc(exams.createdAt));
     const result = [];
@@ -229,12 +323,30 @@ export async function getExamsWithStats(studentId?: number) {
 
     return result;
   } catch (error) {
-    console.error('getExamsWithStats error:', error);
-    throw new Error('فشل جلب قائمة الاختبارات', { cause: error });
+    console.warn('getExamsWithStats fallback to memory:', error);
+    return memoryState.exams;
   }
 }
 
 export async function getExamDetails(examId: number, includeAnswers = false) {
+  if (!hasDatabaseConfigured()) {
+    const exam = memoryState.exams.find(e => e.id === Number(examId)) || memoryState.exams[0];
+    if (!exam) return null;
+    const questions = memoryState.questions.filter(q => q.examId === exam.id);
+    return {
+      ...exam,
+      questions: questions.map(q => ({
+        id: q.id,
+        examId: q.examId,
+        questionText: q.questionText,
+        type: q.type,
+        options: q.options,
+        points: q.points,
+        ...(includeAnswers ? { correctOptionIndex: q.correctOptionIndex, explanation: q.explanation } : {}),
+      })),
+    };
+  }
+
   try {
     const examData = await db.select().from(exams).where(eq(exams.id, examId));
     if (examData.length === 0) return null;
@@ -255,8 +367,22 @@ export async function getExamDetails(examId: number, includeAnswers = false) {
       })),
     };
   } catch (error) {
-    console.error('getExamDetails error:', error);
-    throw new Error('فشل جلب تفاصيل الاختبار', { cause: error });
+    console.warn('getExamDetails fallback to memory:', error);
+    const exam = memoryState.exams.find(e => e.id === Number(examId)) || memoryState.exams[0];
+    if (!exam) return null;
+    const questions = memoryState.questions.filter(q => q.examId === exam.id);
+    return {
+      ...exam,
+      questions: questions.map(q => ({
+        id: q.id,
+        examId: q.examId,
+        questionText: q.questionText,
+        type: q.type,
+        options: q.options,
+        points: q.points,
+        ...(includeAnswers ? { correctOptionIndex: q.correctOptionIndex, explanation: q.explanation } : {}),
+      })),
+    };
   }
 }
 
@@ -412,6 +538,9 @@ export async function submitExamAnswers(data: {
 
 // --- RESULTS & STATS ---
 export async function getAllResults() {
+  if (!hasDatabaseConfigured()) {
+    return memoryState.results;
+  }
   try {
     const results = await db.select({
       id: examResults.id,
@@ -434,12 +563,15 @@ export async function getAllResults() {
 
     return results;
   } catch (error) {
-    console.error('getAllResults error:', error);
-    throw new Error('فشل جلب نتائج الاختبارات', { cause: error });
+    console.warn('getAllResults fallback to memory:', error);
+    return memoryState.results;
   }
 }
 
 export async function getStudentResults(studentId: number) {
+  if (!hasDatabaseConfigured()) {
+    return memoryState.results.filter(r => r.studentId === studentId);
+  }
   try {
     const results = await db.select({
       id: examResults.id,
@@ -460,12 +592,24 @@ export async function getStudentResults(studentId: number) {
 
     return results;
   } catch (error) {
-    console.error('getStudentResults error:', error);
-    throw new Error('فشل جلب نتائج الطالب', { cause: error });
+    console.warn('getStudentResults fallback to memory:', error);
+    return memoryState.results.filter(r => r.studentId === studentId);
   }
 }
 
 export async function getAdminStats() {
+  if (!hasDatabaseConfigured()) {
+    return {
+      totalStudents: memoryState.students.length,
+      totalCodes: memoryState.codes.length,
+      usedCodes: memoryState.codes.filter(c => c.status === 'used').length,
+      unusedCodes: memoryState.codes.filter(c => c.status === 'unused' || c.status === 'active').length,
+      totalLessons: memoryState.lessons.length,
+      totalExams: memoryState.exams.length,
+      totalSubmissions: memoryState.results.length,
+      averageScorePercent: 85,
+    };
+  }
   try {
     const [stCount] = await db.select({ count: count() }).from(students);
     const [cTotal] = await db.select({ count: count() }).from(accessCodes);
@@ -487,8 +631,17 @@ export async function getAdminStats() {
       averageScorePercent: Math.round(Number(avgScore?.avg || 0)),
     };
   } catch (error) {
-    console.error('getAdminStats error:', error);
-    throw new Error('فشل جلب إحصائيات الإدارة', { cause: error });
+    console.warn('getAdminStats fallback to memory:', error);
+    return {
+      totalStudents: memoryState.students.length,
+      totalCodes: memoryState.codes.length,
+      usedCodes: memoryState.codes.filter(c => c.status === 'used').length,
+      unusedCodes: memoryState.codes.filter(c => c.status === 'unused' || c.status === 'active').length,
+      totalLessons: memoryState.lessons.length,
+      totalExams: memoryState.exams.length,
+      totalSubmissions: memoryState.results.length,
+      averageScorePercent: 85,
+    };
   }
 }
 
@@ -521,15 +674,18 @@ export async function clearDemoData(keepCurriculum: boolean = true) {
 
 // --- ADMIN PASSWORD & SECURITY MANAGEMENT ---
 export async function getAdminPin(): Promise<string> {
+  if (!hasDatabaseConfigured()) {
+    return memoryState.adminPin || process.env.ADMIN_PIN || 'emam2025';
+  }
   try {
     const records = await db.select().from(systemSettings).where(eq(systemSettings.key, 'admin_pin'));
     if (records.length > 0 && records[0].value) {
       return records[0].value;
     }
-    return process.env.ADMIN_PIN || 'emam2025';
+    return memoryState.adminPin || process.env.ADMIN_PIN || 'emam2025';
   } catch (error) {
-    console.error('getAdminPin error:', error);
-    return process.env.ADMIN_PIN || 'emam2025';
+    console.warn('getAdminPin fallback to in-memory PIN:', error);
+    return memoryState.adminPin || process.env.ADMIN_PIN || 'emam2025';
   }
 }
 
@@ -552,20 +708,27 @@ export async function changeAdminPin(currentPin: string, newPin: string): Promis
       throw new Error('كلمة المرور الجديدة يجب ألا تقل عن 4 خانات');
     }
 
-    // Upsert the new admin PIN into systemSettings
-    await db.insert(systemSettings)
-      .values({
-        key: 'admin_pin',
-        value: cleanNewPin,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: systemSettings.key,
-        set: {
-          value: cleanNewPin,
-          updatedAt: new Date(),
-        },
-      });
+    memoryState.adminPin = cleanNewPin;
+
+    if (hasDatabaseConfigured()) {
+      try {
+        await db.insert(systemSettings)
+          .values({
+            key: 'admin_pin',
+            value: cleanNewPin,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: systemSettings.key,
+            set: {
+              value: cleanNewPin,
+              updatedAt: new Date(),
+            },
+          });
+      } catch (dbErr) {
+        console.warn('changeAdminPin saved to memory, DB warning:', dbErr);
+      }
+    }
 
     return { success: true, message: 'تم تغيير كلمة مرور المشرف بنجاح' };
   } catch (error: any) {

@@ -11,6 +11,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { Exam, Student } from '../types.ts';
+import * as dataService from '../lib/dataService.ts';
 
 interface ExamTakingProps {
   examId: number;
@@ -50,16 +51,18 @@ export const ExamTaking: React.FC<ExamTakingProps> = ({ examId, student, onFinis
   const fetchExam = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`/api/exams/${examId}`);
-      if (!res.ok) throw new Error('فشل تحميل بيانات الاختبار');
-      const data: ExamDetailedData = await res.json();
-      setExam(data);
+      const data = await dataService.getExamDetails(examId);
+      const detailedExam: ExamDetailedData = {
+        ...data.exam,
+        questions: data.questions as any,
+      };
+      setExam(detailedExam);
 
-      if (data.timeLimitMinutes > 0) {
-        setSecondsRemaining(data.timeLimitMinutes * 60);
+      if (detailedExam.timeLimitMinutes > 0) {
+        setSecondsRemaining(detailedExam.timeLimitMinutes * 60);
       }
     } catch (err: any) {
-      setError(err.message || 'حدث خطأ غير متوقع');
+      setError(err.message || 'حدث خطأ غير متوقع أثناء تحميل الاختبار');
     } finally {
       setLoading(false);
     }
@@ -110,20 +113,15 @@ export const ExamTaking: React.FC<ExamTakingProps> = ({ examId, student, onFinis
     setIsSubmitting(true);
     try {
       const timeSpentSeconds = Math.round((Date.now() - startTime) / 1000);
-      const res = await fetch(`/api/exams/${examId}/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studentId: student.id,
-          timeSpentSeconds,
-          answers,
-        }),
-      });
+      const data = await dataService.submitExam(
+        examId,
+        answers,
+        student.id,
+        student.name,
+        timeSpentSeconds
+      );
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشل تسليم الاختبار');
-
-      setSubmissionResult(data);
+      setSubmissionResult(data as any);
     } catch (err: any) {
       alert(err.message || 'فشل تسليم الإجابات');
       setIsSubmitting(false);
